@@ -1,0 +1,13 @@
+# Binaries
+/bin/
+*.exe
+
+# Test/benchmark artifacts
+*.out
+*.prof
+
+# Models (large GGUF files, downloaded later for the real llama.cpp workers)
+*.gguf
+
+# OS noise
+.DS_Store
