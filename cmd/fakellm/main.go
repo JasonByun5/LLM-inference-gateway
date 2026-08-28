@@ -8,8 +8,11 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
+	"time"
 )
 
 func main() {
@@ -25,8 +28,8 @@ func main() {
 		}
 
 		var body struct {
-			Prompt    string `"json:prompt"`
-			MaxTokens int    `"json:max_tokens"`
+			Prompt    string `json:"prompt"`
+			MaxTokens int    `json:"max_tokens"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -34,15 +37,44 @@ func main() {
 			return
 		}
 
+		select {
+		case <-r.Context().Done():
+			log.Printf("client disconnected")
+			return
+		case <-time.After(time.Duration(len(body.Prompt)) * time.Millisecond):
+		}
+
 		if body.MaxTokens == 0 {
 			body.MaxTokens = 50
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"prompt":     body.Prompt,
-			"max_tokens": body.MaxTokens,
-		})
+		words := strings.Fields(body.Prompt)
+
+		if len(words) == 0 {
+			words = []string{"token"}
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		for i := 0; i < body.MaxTokens; i++ {
+			word := words[i%len(words)]
+			fmt.Fprintf(w, "data: {\"token\":%q,\"worker\":%q}\n\n", word, *name)
+			flusher.Flush()
+
+			select {
+			case <-r.Context().Done():
+				log.Printf("client disconnected")
+				return
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
 
 	})
 
