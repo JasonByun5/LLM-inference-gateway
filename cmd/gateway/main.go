@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type flushWriter struct {
@@ -52,8 +53,12 @@ func main() {
 	backend := flag.String("backend", "http://localhost:9001", "origin to forward to")
 	flag.Parse()
 
-	// Outbound: talks to the backend. Timeout so a dead backend → 502, not a hang.
-	client := &http.Client{}
+	// Outbound: talks to the backend. Timeout so a dead backend → 502 for header response
+	client := &http.Client{
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: 2 * time.Second,
+		},
+	}
 
 	// Inbound: curl hits this. Each request builds a *new* outbound request.
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
