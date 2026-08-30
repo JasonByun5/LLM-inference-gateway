@@ -9,46 +9,17 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"time"
 )
 
-func main() {
-	backend := flag.String("backend", "http://localhost:9001", "origin to forward to")
-	flag.Parse()
+type flushWriter struct {
+	w http.ResponseWriter
+	f http.Flusher
+}
 
-	// Outbound: talks to the backend. Timeout so a dead backend → 502, not a hang.
-	client := &http.Client{Timeout: 2 * time.Second}
-
-	// Inbound: curl hits this. Each request builds a *new* outbound request.
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("gateway got %s %s", r.Method, r.URL.RequestURI())
-
-		// Same path and query the client asked for, on the backend host.
-		url := *backend + r.URL.RequestURI()
-
-		// r.Body is a stream — pass it through; do not ReadAll then try again.
-		outReq, err := http.NewRequestWithContext(r.Context(), r.Method, url, r.Body)
-		if err != nil {
-			http.Error(w, "bad gateway", http.StatusBadGateway)
-			return
-		}
-		copySkipHop(outReq.Header, r.Header)
-		outReq.ContentLength = r.ContentLength
-
-		resp, err := client.Do(outReq)
-		if err != nil {
-			http.Error(w, "bad gateway", http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-		copySkipHop(w.Header(), resp.Header)
-
-		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
-	})
-
-	log.Printf("gateway listening on :8080 (backend=%s)", *backend)
-	log.Fatal(http.ListenAndServe(":8080", handler))
+func (fw flushWriter) Write(p []byte) (int, error) {
+	n, err := fw.w.Write(p)
+	fw.f.Flush()
+	return n, err
 }
 
 var hopByHop = map[string]bool{
@@ -75,4 +46,48 @@ func copySkipHop(dst, src http.Header) {
 			dst.Del(http.CanonicalHeaderKey(f))
 		}
 	}
+}
+
+func main() {
+	backend := flag.String("backend", "http://localhost:9001", "origin to forward to")
+	flag.Parse()
+
+	// Outbound: talks to the backend. Timeout so a dead backend → 502, not a hang.
+	client := &http.Client{}
+
+	// Inbound: curl hits this. Each request builds a *new* outbound request.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("gateway got %s %s", r.Method, r.URL.RequestURI())
+
+		// Same path and query the client asked for, on the backend host.
+		url := *backend + r.URL.RequestURI()
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		// r.Body is a stream — pass it through; do not ReadAll then try again.
+		outReq, err := http.NewRequestWithContext(r.Context(), r.Method, url, r.Body)
+		if err != nil {
+			http.Error(w, "bad gateway", http.StatusBadGateway)
+			return
+		}
+		copySkipHop(outReq.Header, r.Header)
+		outReq.ContentLength = r.ContentLength
+
+		resp, err := client.Do(outReq)
+		if err != nil {
+			http.Error(w, "bad gateway", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		copySkipHop(w.Header(), resp.Header)
+
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(flushWriter{w, flusher}, resp.Body)
+	})
+
+	log.Printf("gateway listening on :8080 (backend=%s)", *backend)
+	log.Fatal(http.ListenAndServe(":8080", handler))
 }

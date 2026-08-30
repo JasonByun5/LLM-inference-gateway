@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	port := flag.String("port", "http:localhost:9001", "port for the proxy")
+	port := flag.String("port", ":9001", "port for the proxy")
 	name := flag.String("name", "fakellm", "")
 	flag.Parse()
 
@@ -79,5 +79,5 @@ func main() {
 	})
 
 	log.Printf("%s listening on :%s", *name, *port)
-	log.Fatal(http.ListenAndServe(":9001", nil))
+	log.Fatal(http.ListenAndServe(*port, nil))
 }
