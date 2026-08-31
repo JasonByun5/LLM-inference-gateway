@@ -6,6 +6,7 @@ package main
 import (
 	"flag"
 	"io"
+	"llm-inference-gateway/internal/balancer"
 	"log"
 	"net/http"
 	"strings"
@@ -50,7 +51,7 @@ func copySkipHop(dst, src http.Header) {
 }
 
 func main() {
-	backend := flag.String("backend", "http://localhost:9001", "origin to forward to")
+	backends := flag.String("backends", "http://localhost:9001", "origin to forward to")
 	flag.Parse()
 
 	// Outbound: talks to the backend. Timeout so a dead backend → 502 for header response
@@ -60,12 +61,28 @@ func main() {
 		},
 	}
 
+	raw := strings.Split(*backends, ",")
+	origins := make([]string, 0, len(raw))
+	for _, b := range raw {
+		if s := strings.TrimSpace(b); s != "" {
+			origins = append(origins, s)
+		}
+	}
+	pool := balancer.New(origins)
+
 	// Inbound: curl hits this. Each request builds a *new* outbound request.
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("gateway got %s %s", r.Method, r.URL.RequestURI())
 
-		// Same path and query the client asked for, on the backend host.
-		url := *backend + r.URL.RequestURI()
+		// picks a backend from the pool and creates the URL
+		backend, err := pool.Pick()
+		if err != nil {
+			http.Error(w, "bad gateway", http.StatusBadGateway)
+			return
+		}
+		defer pool.Release(backend)
+		url := backend.URL + r.URL.RequestURI()
+
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -93,6 +110,6 @@ func main() {
 		io.Copy(flushWriter{w, flusher}, resp.Body)
 	})
 
-	log.Printf("gateway listening on :8080 (backend=%s)", *backend)
+	log.Printf("gateway listening on :8080 (backend=%v)", origins)
 	log.Fatal(http.ListenAndServe(":8080", handler))
 }
