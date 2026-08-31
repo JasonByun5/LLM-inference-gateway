@@ -2,7 +2,9 @@ package balancer
 
 import (
 	"fmt"
+	"net/http"
 	"sync"
+	"time"
 )
 
 type Pool struct {
@@ -22,6 +24,47 @@ func New(urls []string) *Pool {
 	}
 
 	return p
+}
+
+func (p *Pool) CheckHealth() {
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		p.mu.Lock()
+		urls := make([]string, len(p.backends))
+		for i := range p.backends {
+			urls[i] = p.backends[i].URL
+		}
+		p.mu.Unlock()
+
+		for i, url := range urls {
+			resp, err := client.Get(url + "/health")
+			ok := err == nil && resp.StatusCode == 200
+			if resp != nil {
+				resp.Body.Close()
+			}
+
+			p.mu.Lock()
+			b := &p.backends[i]
+			if ok {
+				b.successes++
+				b.fails = 0
+				if b.successes >= 2 {
+					b.healthy = true
+				}
+			} else {
+				b.fails++
+				b.successes = 0
+				if b.fails >= 2 {
+					b.healthy = false
+				}
+			}
+			p.mu.Unlock()
+
+		}
+	}
 }
 
 func (p *Pool) Pick() (*Backend, error) {

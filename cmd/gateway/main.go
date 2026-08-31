@@ -70,6 +70,8 @@ func main() {
 	}
 	pool := balancer.New(origins)
 
+	go pool.CheckHealth()
+
 	// Inbound: curl hits this. Each request builds a *new* outbound request.
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("gateway got %s %s", r.Method, r.URL.RequestURI())

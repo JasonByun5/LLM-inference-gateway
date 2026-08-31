@@ -20,6 +20,15 @@ func main() {
 	name := flag.String("name", "fakellm", "")
 	flag.Parse()
 
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+	})
+
 	http.HandleFunc("/generate", func(w http.ResponseWriter, r *http.Request) {
 
 		if r.Method != http.MethodPost {
