@@ -52,7 +52,18 @@ func copySkipHop(dst, src http.Header) {
 
 func main() {
 	backends := flag.String("backends", "http://localhost:9001", "origin to forward to")
+	policyName := flag.String("policy", "round-robin", "round-robin or least-inflight")
 	flag.Parse()
+
+	var policy balancer.Policy
+	switch *policyName {
+	case "least-inflight":
+		policy = balancer.LeastInflight
+	case "round-robin":
+		policy = balancer.RoundRobin
+	default:
+		log.Fatalf("unknown policy %q", *policyName)
+	}
 
 	// Outbound: talks to the backend. Timeout so a dead backend → 502 for header response
 	client := &http.Client{
@@ -68,7 +79,7 @@ func main() {
 			origins = append(origins, s)
 		}
 	}
-	pool := balancer.New(origins)
+	pool := balancer.New(origins, policy)
 
 	go pool.CheckHealth()
 

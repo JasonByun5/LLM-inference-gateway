@@ -7,14 +7,22 @@ import (
 	"time"
 )
 
+type Policy int
+
+const (
+	RoundRobin Policy = iota
+	LeastInflight
+)
+
 type Pool struct {
 	mu       sync.Mutex
 	next     int
+	policy   Policy
 	backends []Backend
 }
 
-func New(urls []string) *Pool {
-	p := &Pool{}
+func New(urls []string, policy Policy) *Pool {
+	p := &Pool{policy: policy}
 	for _, url := range urls {
 		p.backends = append(p.backends, Backend{
 			URL:      url,
@@ -76,17 +84,50 @@ func (p *Pool) Pick() (*Backend, error) {
 		return nil, fmt.Errorf("no backends")
 	}
 
+	var b *Backend
+
+	switch p.policy {
+	case LeastInflight:
+		b = p.pickLeastInflight()
+	default:
+		b = p.pickRoundRobin()
+	}
+
+	if b == nil {
+		return nil, fmt.Errorf("no healthy backends")
+	}
+
+	b.inflight++
+	return b, nil
+}
+
+func (p *Pool) pickRoundRobin() *Backend {
+	n := len(p.backends)
+
 	for i := 0; i < n; i++ {
 		b := &p.backends[p.next]
 		p.next = (p.next + 1) % n
 		if b.healthy {
 			b.inflight++
-			return b, nil
+			return b
 		}
 	}
 
-	return nil, fmt.Errorf("no healthy backends")
+	return nil
+}
 
+func (p *Pool) pickLeastInflight() *Backend {
+	var best *Backend
+	for i := range p.backends {
+		b := &p.backends[i]
+		if !b.healthy {
+			continue
+		}
+		if best == nil || b.inflight < best.inflight {
+			best = b
+		}
+	}
+	return best
 }
 
 func (p *Pool) Release(backend *Backend) {
