@@ -108,7 +108,6 @@ func (p *Pool) pickRoundRobin() *Backend {
 		b := &p.backends[p.next]
 		p.next = (p.next + 1) % n
 		if b.healthy {
-			b.inflight++
 			return b
 		}
 	}

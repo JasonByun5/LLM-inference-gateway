@@ -18,7 +18,9 @@ import (
 func main() {
 	port := flag.String("port", "9001", "port for the proxy")
 	name := flag.String("name", "fakellm", "")
+	mult := flag.Float64("slow", 1, "token delay multiplier")
 	flag.Parse()
+	delay := time.Duration(float64(50*time.Millisecond) * *mult)
 
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -79,7 +81,7 @@ func main() {
 			case <-r.Context().Done():
 				log.Printf("client disconnected")
 				return
-			case <-time.After(50 * time.Millisecond):
+			case <-time.After(delay):
 			}
 		}
 		fmt.Fprintf(w, "data: [DONE]\n\n")
