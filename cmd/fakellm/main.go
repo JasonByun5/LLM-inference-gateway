@@ -19,7 +19,9 @@ func main() {
 	port := flag.String("port", "9001", "port for the proxy")
 	name := flag.String("name", "fakellm", "")
 	mult := flag.Float64("slow", 1, "token delay multiplier")
+	slots := flag.Int("slots", 1, "max concurrent /generate calls")
 	flag.Parse()
+	sem := make(chan struct{}, *slots)
 	delay := time.Duration(float64(50*time.Millisecond) * *mult)
 
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -32,6 +34,9 @@ func main() {
 	})
 
 	http.HandleFunc("/generate", func(w http.ResponseWriter, r *http.Request) {
+
+		sem <- struct{}{}
+		defer func() { <-sem }()
 
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

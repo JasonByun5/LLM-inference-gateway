@@ -79,20 +79,22 @@ func main() {
 	var wg sync.WaitGroup
 	ttft := metrics.New()
 	total := metrics.New()
-	var errors atomic.Int64
+	var sent, errors atomic.Int64
 
 	for {
 		select {
 		case <-stop:
 			ticker.Stop()
 			wg.Wait()
-			fmt.Printf("p50=%v p95=%v p99=%v\n",
+			fmt.Printf("sent=%d   errors=%d\n", sent.Load(), errors.Load())
+			fmt.Printf("ttft:  p50=%v p95=%v p99=%v\n",
 				ttft.Percentile(0.50), ttft.Percentile(0.95), ttft.Percentile(0.99))
-			fmt.Printf("p50=%v p95=%v p99=%v\n",
+			fmt.Printf("total:  p50=%v p95=%v p99=%v\n",
 				total.Percentile(0.50), total.Percentile(0.95), total.Percentile(0.99))
-			fmt.Printf("errors=%d\n", errors.Load())
+
 			return
 		case <-ticker.C:
+			sent.Add(1)
 			wg.Add(1)
 			request := requests[rand.Intn(len(requests))]
 			go sendOne(*url, request, ttft, total, &errors, &wg)

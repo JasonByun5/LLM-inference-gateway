@@ -68,7 +68,7 @@ func main() {
 	// Outbound: talks to the backend. Timeout so a dead backend → 502 for header response
 	client := &http.Client{
 		Transport: &http.Transport{
-			ResponseHeaderTimeout: 2 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
 		},
 	}
 
