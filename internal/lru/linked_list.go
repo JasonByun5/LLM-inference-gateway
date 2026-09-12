@@ -54,7 +54,7 @@ func (d *DoublyLinkedList) moveToFront(n *Node) {
 
 }
 
-func (d *DoublyLinkedList) PopBack() *Node {
+func (d *DoublyLinkedList) popBack() *Node {
 	if d.tail == nil {
 		return nil
 	}
