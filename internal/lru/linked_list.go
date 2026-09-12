@@ -44,7 +44,21 @@ func (d *DoublyLinkedList) remove(n *Node) {
 }
 
 func (d *DoublyLinkedList) moveToFront(n *Node) {
+	// want to connect the ones it is in between, then make the head pointer into this one and have this one
+
+	if n == d.head {
+		return
+	}
+	d.remove(n)
+	d.pushFront(n)
+
 }
 
-func (d *DoublyLinkedList) PopBack(n *Node) {
+func (d *DoublyLinkedList) PopBack() *Node {
+	if d.tail == nil {
+		return nil
+	}
+	n := d.tail
+	d.remove(n)
+	return n
 }
