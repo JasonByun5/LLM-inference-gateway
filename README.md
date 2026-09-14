@@ -32,6 +32,12 @@ component of the final system:
   cache-aware routing, benchmarks
   ```
 
+  Post swapping in the llama.cpp:
+  - Using 3 Gemma-4-E2B-it-Q4
+  sent=30   errors=0
+ttft:  p50=119.10525ms p95=162.592792ms p99=288.042083ms
+total:  p50=406.101667ms p95=560.052416ms p99=579.052792ms
+
 ## Rung 4 — load sweep
 Setup: 3 fakellm workers (`-slots 1`), gateway on `:8080`, 30s open-loop.
 Capacity ≈ 3 / 0.8s ≈ 4 req/s.

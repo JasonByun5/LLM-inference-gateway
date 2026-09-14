@@ -4,14 +4,57 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"io"
 	"llm-inference-gateway/internal/balancer"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
+
+type generateReq struct {
+	Prompt    string `json:"prompt"`
+	MaxTokens int    `json:"max_tokens"`
+}
+
+// rewriteGenerate maps the loadgen/client POST /generate body onto
+// llama-server's /v1/chat/completions API
+func rewriteGenerate(r *http.Request) error {
+	if r.URL.Path != "/generate" {
+		return nil
+	}
+
+	var in generateReq
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		r.Body.Close()
+		return err
+	}
+	r.Body.Close()
+
+	if in.MaxTokens == 0 {
+		in.MaxTokens = 50
+	}
+
+	out, err := json.Marshal(map[string]any{
+		"messages":   []map[string]string{{"role": "user", "content": in.Prompt}},
+		"max_tokens": in.MaxTokens,
+		"stream":     true,
+	})
+	if err != nil {
+		return err
+	}
+
+	r.Body = io.NopCloser(bytes.NewReader(out))
+	r.ContentLength = int64(len(out))
+	r.URL.Path = "/v1/chat/completions"
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Content-Length", strconv.Itoa(len(out)))
+	return nil
+}
 
 type flushWriter struct {
 	w http.ResponseWriter
@@ -53,6 +96,7 @@ func copySkipHop(dst, src http.Header) {
 func main() {
 	backends := flag.String("backends", "http://localhost:9001", "origin to forward to")
 	policyName := flag.String("policy", "round-robin", "round-robin or least-inflight")
+	llama := flag.Bool("llama", false, "rewrite POST /generate to llama-server /v1/chat/completions")
 	flag.Parse()
 
 	var policy balancer.Policy
@@ -86,6 +130,14 @@ func main() {
 	// Inbound: curl hits this. Each request builds a *new* outbound request.
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("gateway got %s %s", r.Method, r.URL.RequestURI())
+
+		// Must run before URL + body are forwarded: mutates path, body, Content-Length.
+		if *llama {
+			if err := rewriteGenerate(r); err != nil {
+				http.Error(w, "bad json", http.StatusBadRequest)
+				return
+			}
+		}
 
 		// picks a backend from the pool and creates the URL
 		backend, err := pool.Pick()
