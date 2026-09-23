@@ -75,6 +75,18 @@ func (p *Pool) CheckHealth() {
 	}
 }
 
+func (p *Pool) Healthy() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for i := range p.backends {
+		if p.backends[i].healthy {
+			n++
+		}
+	}
+	return n
+}
+
 func (p *Pool) Pick() (*Backend, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

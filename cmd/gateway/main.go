@@ -9,6 +9,7 @@ import (
 	"flag"
 	"io"
 	"llm-inference-gateway/internal/balancer"
+	"llm-inference-gateway/internal/queue"
 	"log"
 	"net/http"
 	"strconv"
@@ -97,6 +98,9 @@ func main() {
 	backends := flag.String("backends", "http://localhost:9001", "origin to forward to")
 	policyName := flag.String("policy", "round-robin", "round-robin or least-inflight")
 	llama := flag.Bool("llama", false, "rewrite POST /generate to llama-server /v1/chat/completions")
+	queueSize := flag.Int("queue-size", 8, "max requests waiting for a slot")
+	maxWait := flag.Duration("max-wait", 2*time.Second, "shed when estimated wait exceeds this")
+	slots := flag.Int("slots", 1, "concurrent requests per backend")
 	flag.Parse()
 
 	var policy balancer.Policy
@@ -124,6 +128,9 @@ func main() {
 		}
 	}
 	pool := balancer.New(origins, policy)
+	q := queue.New(*queueSize, *maxWait, func() int {
+		return pool.Healthy() * *slots
+	})
 
 	go pool.CheckHealth()
 
@@ -138,6 +145,19 @@ func main() {
 				return
 			}
 		}
+
+		if err := q.Acquire(r.Context()); err != nil {
+			switch err {
+			case queue.ErrShed:
+				http.Error(w, "too many requests", http.StatusTooManyRequests)
+			case queue.ErrNoCapacity:
+				http.Error(w, "bad gateway", http.StatusBadGateway)
+			}
+			return
+		}
+
+		start := time.Now()
+		defer func() { q.Release(time.Since(start)) }()
 
 		// picks a backend from the pool and creates the URL
 		backend, err := pool.Pick()
