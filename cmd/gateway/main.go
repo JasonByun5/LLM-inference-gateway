@@ -57,6 +57,28 @@ func rewriteGenerate(r *http.Request) error {
 	return nil
 }
 
+// promptFrom reads a /generate JSON body and returns its prompt.
+// The body is put back so rewriteGenerate or the proxy can read it again.
+func promptFrom(r *http.Request) (string, error) {
+	if r.URL.Path != "/generate" || r.Body == nil {
+		return "", nil
+	}
+	raw, err := io.ReadAll(r.Body)
+	r.Body.Close()
+	if err != nil {
+		return "", err
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	r.ContentLength = int64(len(raw))
+	r.Header.Set("Content-Length", strconv.Itoa(len(raw)))
+
+	var in generateReq
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return "", err
+	}
+	return in.Prompt, nil
+}
+
 type flushWriter struct {
 	w http.ResponseWriter
 	f http.Flusher
@@ -96,17 +118,25 @@ func copySkipHop(dst, src http.Header) {
 
 func main() {
 	backends := flag.String("backends", "http://localhost:9001", "origin to forward to")
-	policyName := flag.String("policy", "round-robin", "round-robin or least-inflight")
+	policyName := flag.String("policy", "round-robin", "round-robin or least-inflight or cache-aware")
 	llama := flag.Bool("llama", false, "rewrite POST /generate to llama-server /v1/chat/completions")
 	queueSize := flag.Int("queue-size", 8, "max requests waiting for a slot")
 	maxWait := flag.Duration("max-wait", 2*time.Second, "shed when estimated wait exceeds this")
 	slots := flag.Int("slots", 1, "concurrent requests per backend")
+
+	cacheBlockSize := flag.Int("cache-block-size", 64, "prompt bytes per cache block")
+	overlapWeight := flag.Float64("overlap-weight", 10, "score added per matched block")
+	loadPenalty := flag.Float64("load-penalty", 1, "score subtracted per inflight request")
+	cacheBlocks := flag.Int("cache-blocks", 256, "predicted cache capacity in blocks per worker")
+	cacheTTL := flag.Duration("cache-ttl", 30*time.Second, "how long a predicted cache entry stays valid")
 	flag.Parse()
 
 	var policy balancer.Policy
 	switch *policyName {
 	case "least-inflight":
 		policy = balancer.LeastInflight
+	case "cache-aware":
+		policy = balancer.CacheAware
 	case "round-robin":
 		policy = balancer.RoundRobin
 	default:
@@ -127,7 +157,12 @@ func main() {
 			origins = append(origins, s)
 		}
 	}
-	pool := balancer.New(origins, policy)
+	pool := balancer.New(origins, policy, balancer.CacheConfig{
+		OverlapWeight: *overlapWeight,
+		LoadPenalty:   *loadPenalty,
+		Capacity:      *cacheBlocks,
+		TTL:           *cacheTTL,
+	})
 	q := queue.New(*queueSize, *maxWait, func() int {
 		return pool.Healthy() * *slots
 	})
@@ -138,6 +173,18 @@ func main() {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("gateway got %s %s", r.Method, r.URL.RequestURI())
 
+		// Blocks are what Pick scores against. Other policies ignore them.
+		// Read the prompt before rewriteGenerate replaces the body.
+		var blocks []uint64
+		if policy == balancer.CacheAware {
+			prompt, err := promptFrom(r)
+			if err != nil {
+				http.Error(w, "bad json", http.StatusBadRequest)
+				return
+			}
+			blocks = splitBlocks(prompt, *cacheBlockSize)
+		}
+
 		// Must run before URL + body are forwarded: mutates path, body, Content-Length.
 		if *llama {
 			if err := rewriteGenerate(r); err != nil {
@@ -146,6 +193,7 @@ func main() {
 			}
 		}
 
+		//checks the queue to make sure that it is within bounds
 		if err := q.Acquire(r.Context()); err != nil {
 			switch err {
 			case queue.ErrShed:
@@ -160,7 +208,7 @@ func main() {
 		defer func() { q.Release(time.Since(start)) }()
 
 		// picks a backend from the pool and creates the URL
-		backend, err := pool.Pick()
+		backend, err := pool.Pick(blocks)
 		if err != nil {
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 			return

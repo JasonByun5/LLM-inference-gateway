@@ -2,6 +2,8 @@ package balancer
 
 import (
 	"fmt"
+	"llm-inference-gateway/internal/lru"
+	"llm-inference-gateway/internal/radix"
 	"net/http"
 	"sync"
 	"time"
@@ -12,17 +14,33 @@ type Policy int
 const (
 	RoundRobin Policy = iota
 	LeastInflight
+	CacheAware
 )
+
+type CacheConfig struct {
+	OverlapWeight float64
+	LoadPenalty   float64
+	Capacity      int           // predicted blocks kept per worker
+	TTL           time.Duration // how long a predicted entry stays valid
+}
 
 type Pool struct {
 	mu       sync.Mutex
 	next     int
 	policy   Policy
+	cache    CacheConfig
 	backends []Backend
+	tree     *radix.Tree
+	lru      *lru.Lru
 }
 
-func New(urls []string, policy Policy) *Pool {
-	p := &Pool{policy: policy}
+func New(urls []string, policy Policy, cache CacheConfig) *Pool {
+	p := &Pool{
+		policy: policy,
+		cache:  cache,
+		tree:   radix.New(),
+		lru:    lru.New(),
+	}
 	for _, url := range urls {
 		p.backends = append(p.backends, Backend{
 			URL:      url,
@@ -87,7 +105,10 @@ func (p *Pool) Healthy() int {
 	return n
 }
 
-func (p *Pool) Pick() (*Backend, error) {
+// Pick chooses a backend. blocks is this prompt's hashes in order, from
+// splitBlocks. Round-robin and least-inflight ignore it. Cache-aware uses
+// it as the lookup key for the predicted cache.
+func (p *Pool) Pick(blocks []uint64) (*Backend, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -101,6 +122,8 @@ func (p *Pool) Pick() (*Backend, error) {
 	switch p.policy {
 	case LeastInflight:
 		b = p.pickLeastInflight()
+	case CacheAware:
+		b = p.pickCacheAware(blocks)
 	default:
 		b = p.pickRoundRobin()
 	}
@@ -139,6 +162,14 @@ func (p *Pool) pickLeastInflight() *Backend {
 		}
 	}
 	return best
+}
+
+// pickCacheAware chooses the healthy backend with the highest score:
+// cache.OverlapWeight * matchedBlocks - cache.LoadPenalty * inflight.
+// matchedBlocks is the leading run of blocks the predicted cache still
+// has for that backend. Record the chosen backend's blocks on the way out.
+func (p *Pool) pickCacheAware(blocks []uint64) *Backend {
+	return nil
 }
 
 func (p *Pool) Release(backend *Backend) {

@@ -7,7 +7,7 @@ func TestPickRoundRobin(t *testing.T) {
 		"http://localhost:9001",
 		"http://localhost:9002",
 		"http://localhost:9003",
-	}, RoundRobin)
+	}, RoundRobin, CacheConfig{})
 	want := []string{
 		"http://localhost:9001",
 		"http://localhost:9002",
@@ -15,7 +15,7 @@ func TestPickRoundRobin(t *testing.T) {
 		"http://localhost:9001",
 	}
 	for i, u := range want {
-		b, err := p.Pick()
+		b, err := p.Pick(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -30,7 +30,7 @@ func TestPickSkipsUnhealthy(t *testing.T) {
 		"http://localhost:9001",
 		"http://localhost:9002",
 		"http://localhost:9003",
-	}, RoundRobin)
+	}, RoundRobin, CacheConfig{})
 	p.backends[1].healthy = false // 9002 down
 
 	want := []string{
@@ -39,7 +39,7 @@ func TestPickSkipsUnhealthy(t *testing.T) {
 		"http://localhost:9001",
 	}
 	for i, u := range want {
-		b, err := p.Pick()
+		b, err := p.Pick(nil)
 		if err != nil {
 			t.Fatal(err)
 		}

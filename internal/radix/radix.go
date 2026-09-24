@@ -1,16 +1,16 @@
 package radix
 
-type radix struct {
+type Tree struct {
 	root *node
 }
 
-func new() *radix {
-	return &radix{
+func New() *Tree {
+	return &Tree{
 		root: newNode(),
 	}
 }
 
-func (r *radix) insert(s string, value string) {
+func (r *Tree) insert(s string, value string) {
 	cur := r.root
 
 	for i := 0; i < len(s); i++ {
@@ -27,7 +27,7 @@ func (r *radix) insert(s string, value string) {
 	cur.value = value
 }
 
-func (r *radix) longestPrefixMatch(key []byte) (string, bool) {
+func (r *Tree) longestPrefixMatch(key []byte) (string, bool) {
 	cur := r.root
 	var best string
 	found := false

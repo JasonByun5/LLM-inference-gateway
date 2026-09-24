@@ -1,20 +1,20 @@
 package lru
 
-type lru struct {
+type Lru struct {
 	cap  int
 	m    map[string]*Node
 	list *DoublyLinkedList
 }
 
-func New(cap int) *lru {
-	return &lru{
+func New(cap int) *Lru {
+	return &Lru{
 		cap:  cap,
 		m:    make(map[string]*Node),
 		list: newList(),
 	}
 }
 
-func (l *lru) Get(key string) (value int, ok bool) {
+func (l *Lru) Get(key string) (value int, ok bool) {
 	n, ok := l.m[key]
 	if !ok {
 		return 0, false
@@ -24,7 +24,7 @@ func (l *lru) Get(key string) (value int, ok bool) {
 
 }
 
-func (l *lru) Put(key string, value int) {
+func (l *Lru) Put(key string, value int) {
 	n, ok := l.m[key]
 	if ok {
 		n.data = value
