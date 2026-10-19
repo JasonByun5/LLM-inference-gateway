@@ -3,65 +3,60 @@ package radix
 import "testing"
 
 func TestEmpty(t *testing.T) {
-	r := new()
-	if _, ok := r.longestPrefixMatch([]byte("hello")); ok {
-		t.Fatal("empty tree: expected miss")
+	r := New()
+	got := r.prefixLengths([]uint64{1, 2, 3})
+	if len(got) != 0 {
+		t.Fatalf("empty tree: got %v", got)
 	}
 }
 
 func TestExactMatch(t *testing.T) {
-	r := new()
-	r.insert("hello", "hello")
+	r := New()
+	r.insert([]uint64{1, 2, 3}, "worker-a")
 
-	got, ok := r.longestPrefixMatch([]byte("hello"))
-	if !ok {
-		t.Fatal("expected exact hit")
-	}
-	if got != "hello" {
-		t.Fatalf("got %q want %q", got, "hello")
+	got := r.prefixLengths([]uint64{1, 2, 3})
+	if got["worker-a"] != 3 {
+		t.Fatalf("got %v want worker-a=3", got)
 	}
 }
 
-func TestStoredPrefix(t *testing.T) {
-	r := new()
-	r.insert("hello", "hello")
+func TestLongerKey(t *testing.T) {
+	r := New()
+	r.insert([]uint64{1, 2, 3}, "worker-a")
 
-	got, ok := r.longestPrefixMatch([]byte("hello world"))
-	if !ok || got != "hello" {
-		t.Fatalf("got %q ok=%v want hello true", got, ok)
+	got := r.prefixLengths([]uint64{1, 2, 3, 9})
+	if got["worker-a"] != 3 {
+		t.Fatalf("got %v want worker-a=3", got)
 	}
 }
 
-func TestSharedBranchNoStoredPrefix(t *testing.T) {
-	r := new()
-	r.insert("hello", "hello")
+func TestDivergingSuffix(t *testing.T) {
+	r := New()
+	r.insert([]uint64{1, 2, 3, 4}, "worker-a")
 
-	if _, ok := r.longestPrefixMatch([]byte("help")); ok {
-		t.Fatal("shared branch hel is not a stored prefix")
+	got := r.prefixLengths([]uint64{1, 2, 9})
+	if got["worker-a"] != 2 {
+		t.Fatalf("got %v want worker-a=2", got)
 	}
 }
 
-func TestLongestOfTwoPrefixes(t *testing.T) {
-	r := new()
-	r.insert("hel", "hel")
-	r.insert("hello", "hello")
+func TestTwoWorkers(t *testing.T) {
+	r := New()
+	r.insert([]uint64{1, 2}, "worker-a")
+	r.insert([]uint64{1, 2, 3}, "worker-b")
 
-	got, ok := r.longestPrefixMatch([]byte("help"))
-	if !ok || got != "hel" {
-		t.Fatalf("help: got %q ok=%v want hel true", got, ok)
-	}
-
-	got, ok = r.longestPrefixMatch([]byte("hello!"))
-	if !ok || got != "hello" {
-		t.Fatalf("hello!: got %q ok=%v want hello true", got, ok)
+	got := r.prefixLengths([]uint64{1, 2, 3, 4})
+	if got["worker-a"] != 2 || got["worker-b"] != 3 {
+		t.Fatalf("got %v want worker-a=2 worker-b=3", got)
 	}
 }
 
 func TestNoMatch(t *testing.T) {
-	r := new()
-	r.insert("hello", "hello")
+	r := New()
+	r.insert([]uint64{1, 2, 3}, "worker-a")
 
-	if _, ok := r.longestPrefixMatch([]byte("xyz")); ok {
-		t.Fatal("xyz should miss")
+	got := r.prefixLengths([]uint64{9, 8, 7})
+	if len(got) != 0 {
+		t.Fatalf("got %v want empty", got)
 	}
 }
