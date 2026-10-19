@@ -2,7 +2,6 @@ package balancer
 
 import (
 	"fmt"
-	"llm-inference-gateway/internal/lru"
 	"llm-inference-gateway/internal/radix"
 	"math"
 	"net/http"
@@ -25,6 +24,11 @@ type CacheConfig struct {
 	TTL           time.Duration // how long a predicted entry stays valid
 }
 
+type cachedPrefix struct {
+	blocks []uint64
+	at     time.Time
+}
+
 type Pool struct {
 	mu       sync.Mutex
 	next     int
@@ -32,7 +36,7 @@ type Pool struct {
 	cache    CacheConfig
 	backends []Backend
 	tree     *radix.Tree
-	lru      *lru.Lru
+	seen     map[string][]cachedPrefix // worker URL -> sequences, oldest first
 }
 
 func New(urls []string, policy Policy, cache CacheConfig) *Pool {
@@ -40,7 +44,7 @@ func New(urls []string, policy Policy, cache CacheConfig) *Pool {
 		policy: policy,
 		cache:  cache,
 		tree:   radix.New(),
-		lru:    lru.New(),
+		seen:   make(map[string][]cachedPrefix),
 	}
 	for _, url := range urls {
 		p.backends = append(p.backends, Backend{
@@ -163,6 +167,8 @@ func (p *Pool) pickLeastInflight() *Backend {
 }
 
 func (p *Pool) pickCacheAware(blocks []uint64) *Backend {
+	now := time.Now()
+	p.expire(now)
 	matched := p.tree.PrefixLengths(blocks)
 
 	var best *Backend
@@ -188,7 +194,71 @@ func (p *Pool) pickCacheAware(blocks []uint64) *Backend {
 		return nil
 	}
 
+	p.remember(blocks, best, now)
 	return best
+}
+
+func (p *Pool) remember(blocks []uint64, backend *Backend, now time.Time) {
+	if len(blocks) == 0 || backend == nil {
+		return
+	}
+
+	copied := make([]uint64, len(blocks))
+	copy(copied, blocks)
+	p.tree.Insert(copied, backend.URL)
+	p.seen[backend.URL] = append(p.seen[backend.URL], cachedPrefix{
+		blocks: copied,
+		at:     now,
+	})
+	p.evict(backend.URL)
+}
+
+func (p *Pool) expire(now time.Time) {
+	if p.cache.TTL <= 0 {
+		return
+	}
+	for worker, seqs := range p.seen {
+		kept := seqs[:0]
+		for _, s := range seqs {
+			if now.Sub(s.at) > p.cache.TTL {
+				p.tree.Remove(s.blocks, worker)
+				continue
+			}
+			kept = append(kept, s)
+		}
+		if len(kept) == 0 {
+			delete(p.seen, worker)
+			continue
+		}
+		p.seen[worker] = kept
+	}
+}
+
+func (p *Pool) evict(worker string) {
+	if p.cache.Capacity <= 0 {
+		return
+	}
+	for p.blockCount(worker) > p.cache.Capacity {
+		seqs := p.seen[worker]
+		if len(seqs) == 0 {
+			return
+		}
+		p.tree.Remove(seqs[0].blocks, worker)
+		seqs = seqs[1:]
+		if len(seqs) == 0 {
+			delete(p.seen, worker)
+			return
+		}
+		p.seen[worker] = seqs
+	}
+}
+
+func (p *Pool) blockCount(worker string) int {
+	n := 0
+	for _, s := range p.seen[worker] {
+		n += len(s.blocks)
+	}
+	return n
 }
 
 func (p *Pool) Release(backend *Backend) {

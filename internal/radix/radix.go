@@ -10,7 +10,7 @@ func New() *Tree {
 	}
 }
 
-func (r *Tree) insert(blocks []uint64, worker string) {
+func (r *Tree) Insert(blocks []uint64, worker string) {
 	cur := r.root
 
 	for _, block := range blocks {
@@ -20,8 +20,24 @@ func (r *Tree) insert(blocks []uint64, worker string) {
 		}
 
 		cur = cur.children[block]
-		cur.workers[worker] = struct{}{}
+		cur.workers[worker]++
 
+	}
+}
+
+func (r *Tree) Remove(blocks []uint64, worker string) {
+	cur := r.root
+
+	for _, block := range blocks {
+		next := cur.children[block]
+		if next == nil {
+			return
+		}
+		cur = next
+		cur.workers[worker]--
+		if cur.workers[worker] <= 0 {
+			delete(cur.workers, worker)
+		}
 	}
 }
 
