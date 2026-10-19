@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"llm-inference-gateway/internal/lru"
 	"llm-inference-gateway/internal/radix"
+	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -105,9 +106,6 @@ func (p *Pool) Healthy() int {
 	return n
 }
 
-// Pick chooses a backend. blocks is this prompt's hashes in order, from
-// splitBlocks. Round-robin and least-inflight ignore it. Cache-aware uses
-// it as the lookup key for the predicted cache.
 func (p *Pool) Pick(blocks []uint64) (*Backend, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -164,12 +162,33 @@ func (p *Pool) pickLeastInflight() *Backend {
 	return best
 }
 
-// pickCacheAware chooses the healthy backend with the highest score:
-// cache.OverlapWeight * matchedBlocks - cache.LoadPenalty * inflight.
-// matchedBlocks is the leading run of blocks the predicted cache still
-// has for that backend. Record the chosen backend's blocks on the way out.
 func (p *Pool) pickCacheAware(blocks []uint64) *Backend {
-	return nil
+	matched := p.tree.PrefixLengths(blocks)
+
+	var best *Backend
+	bestScore := math.Inf(-1)
+
+	for i := range p.backends {
+		b := &p.backends[i]
+
+		if !b.healthy {
+			continue
+		}
+
+		overlap := matched[b.URL]
+		score := p.cache.OverlapWeight*float64(overlap) - p.cache.LoadPenalty*float64(b.inflight)
+
+		if best == nil || score > bestScore {
+			best = b
+			bestScore = score
+		}
+	}
+
+	if best == nil {
+		return nil
+	}
+
+	return best
 }
 
 func (p *Pool) Release(backend *Backend) {

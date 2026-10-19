@@ -25,7 +25,7 @@ func (r *Tree) insert(blocks []uint64, worker string) {
 	}
 }
 
-func (r *Tree) prefixLengths(blocks []uint64) map[string]int {
+func (r *Tree) PrefixLengths(blocks []uint64) map[string]int {
 	cur := r.root
 	depth := make(map[string]int)
 
