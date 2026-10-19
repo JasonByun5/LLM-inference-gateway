@@ -1,13 +1,13 @@
 package radix
 
 type node struct {
-	value    string
-	children map[byte]*node
-	end      bool
+	workers  map[string]struct{}
+	children map[uint64]*node
 }
 
 func newNode() *node {
 	return &node{
-		children: make(map[byte]*node),
+		children: make(map[uint64]*node),
+		workers:  make(map[string]struct{}),
 	}
 }

@@ -10,38 +10,33 @@ func New() *Tree {
 	}
 }
 
-func (r *Tree) insert(s string, value string) {
+func (r *Tree) insert(blocks []uint64, worker string) {
 	cur := r.root
 
-	for i := 0; i < len(s); i++ {
-		letter := s[i]
+	for _, block := range blocks {
 
-		if cur.children[letter] == nil {
-			cur.children[letter] = newNode()
+		if cur.children[block] == nil {
+			cur.children[block] = newNode()
 		}
-		cur = cur.children[letter]
+
+		cur = cur.children[block]
+		cur.workers[worker] = struct{}{}
 
 	}
-
-	cur.end = true
-	cur.value = value
 }
 
-func (r *Tree) longestPrefixMatch(key []byte) (string, bool) {
+func (r *Tree) prefixLengths(blocks []uint64) map[string]int {
 	cur := r.root
-	var best string
-	found := false
+	depth := make(map[string]int)
 
-	for i := 0; i < len(key); i++ {
-		next := cur.children[key[i]]
-		if next == nil {
+	for i, block := range blocks {
+		cur = cur.children[block]
+		if cur == nil {
 			break
 		}
-		cur = next
-		if cur.end {
-			best = cur.value
-			found = true
+		for worker := range cur.workers {
+			depth[worker] = i + 1
 		}
 	}
-	return best, found
+	return depth
 }
