@@ -41,9 +41,10 @@ func rewriteGenerate(r *http.Request) error {
 	}
 
 	out, err := json.Marshal(map[string]any{
-		"messages":   []map[string]string{{"role": "user", "content": in.Prompt}},
-		"max_tokens": in.MaxTokens,
-		"stream":     true,
+		"messages":     []map[string]string{{"role": "user", "content": in.Prompt}},
+		"max_tokens":   in.MaxTokens,
+		"stream":       true,
+		"cache_prompt": true,
 	})
 	if err != nil {
 		return err
