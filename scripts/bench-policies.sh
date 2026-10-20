@@ -15,8 +15,13 @@
 #            Cache-aware should look like least-inflight here.
 #
 # Each workload x rate x policy runs REPS times. Policy order rotates
-# every rep, and each llama slot is overwritten between runs, so one
+# every rep, and every llama slot is erased between runs, so one
 # policy does not inherit a warm KV cache from the previous one.
+#
+# SLOTS is how many sequences each worker may run at once. It must match
+# llama-server --parallel. One slot holds one prompt; a later different
+# prompt on that same slot replaces it. Extra slots let the glossary stay
+# open in one slot while another prompt uses a different slot.
 #
 # Rates are requests/second. 0.5 leaves a gap between requests, which is
 # where a prefix hit shows up in time to first token. 1 and 2 overlap,
@@ -27,7 +32,7 @@
 # cached worker loses to an idle worker. The prefix is reused when the
 # worker is free, and copied to another worker when it is busy.
 #
-# Override with env vars: RATES, REPS, DURATION, WORKLOADS, CSV.
+# Override with env vars: RATES, REPS, DURATION, WORKLOADS, CSV, SLOTS.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -36,6 +41,7 @@ REPS=${REPS:-3}
 DURATION=${DURATION:-30s}
 WORKLOADS=(${WORKLOADS:-shared unique})
 CSV=${CSV:-loadgen.csv}
+SLOTS=${SLOTS:-4}
 ALL="http://127.0.0.1:9001,http://127.0.0.1:9002,http://127.0.0.1:9003"
 ONE="http://127.0.0.1:9001"
 ROOT="/tmp/llm-gateway-bench"
@@ -68,12 +74,14 @@ cleanup() {
 trap cleanup EXIT
 
 flush_slots() {
-	local port
+	local port id ids
 	for port in 9001 9002 9003; do
-		curl -sf -o /dev/null "http://127.0.0.1:${port}/v1/chat/completions" \
-			-H 'content-type: application/json' \
-			-d '{"messages":[{"role":"user","content":"FLUSH-'"${port}-${RANDOM}"'"}],"max_tokens":1,"stream":false}' \
-			|| echo "warning: flush of :${port} failed" >&2
+		ids=$(curl -sf "http://127.0.0.1:${port}/slots" | python3 -c 'import json,sys; print(" ".join(str(s["id"]) for s in json.load(sys.stdin)))') \
+			|| { echo "warning: could not list slots on :${port}" >&2; continue; }
+		for id in $ids; do
+			curl -sf -o /dev/null -X POST "http://127.0.0.1:${port}/slots/${id}?action=erase" \
+				|| echo "warning: erase of :${port} slot ${id} failed" >&2
+		done
 	done
 }
 
@@ -82,7 +90,7 @@ start_gateway() {
 	local backends=$2
 	local log=$3
 	cleanup
-	local args=(-backends "$backends" -policy "$policy" -slots 1 -llama)
+	local args=(-backends "$backends" -policy "$policy" -slots "$SLOTS" -llama)
 	if [[ "$policy" == "cache-aware" ]]; then
 		args+=(-cache-block-size 256 -overlap-weight 6 -load-penalty 20)
 	fi
